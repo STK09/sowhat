@@ -49,7 +49,6 @@ async def start(update: Update, context: CallbackContext):
         "✨ **Welcome to the Image Uploader Bot!**\n\n"
         "📌 **Features:**\n"
         "✅ Upload images & get a permanent link\n"
-        "✅ Random emoji reactions for fun 🎭\n"
         "✅ Fully automated & responsive\n"
         "✅ No storage limits – Upload as much as you want!\n\n"
         "🚀 **Just send an image to get started!**"
@@ -171,7 +170,7 @@ def main():
     application.add_handler(CommandHandler("unban", unban))
     application.add_handler(CommandHandler("restart", restart))
     application.add_handler(CommandHandler("stats", stats))
-    application.add_handler(CommandHandler("broadcast", broadcast, pass_args=True))
+    application.add_handler(CommandHandler("broadcast", broadcast))
 
     # Media handler
     application.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_media))
