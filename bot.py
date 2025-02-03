@@ -2,10 +2,10 @@ import os
 import requests
 import asyncio
 import random
-import json
 import sys
+import motor.motor_asyncio
 from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup
+    Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 )
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters, CallbackContext
@@ -20,44 +20,45 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 IMGBB_API_KEY = os.getenv("IMGBB_API_KEY")
 OWNER_ID = int(os.getenv("OWNER_ID"))
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
+MONGO_URI = os.getenv("MONGO_URI")
 
-# User data file
-USER_DATA_FILE = "users.json"
-registered_users = set()
+# Connect to MongoDB
+mongo_client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI)
+db = mongo_client["telegram_bot"]
+users_collection = db["users"]
 
-# Load user data
-if os.path.exists(USER_DATA_FILE):
-    with open(USER_DATA_FILE, "r") as f:
-        registered_users = set(json.load(f))
+# Save user data to MongoDB
+async def save_user(user_id):
+    if not await users_collection.find_one({"user_id": user_id}):
+        await users_collection.insert_one({"user_id": user_id})
 
-# Save user data
-def save_users():
-    with open(USER_DATA_FILE, "w") as f:
-        json.dump(list(registered_users), f)
+# Get total users count
+async def get_total_users():
+    return await users_collection.count_documents({})
 
 # Start Command
 async def start(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     mention = update.effective_user.mention_html()
 
-    if user_id not in registered_users:
-        registered_users.add(user_id)
-        save_users()
-        await context.bot.send_message(LOG_CHANNEL_ID, f"🆕 New User: {mention} (`{user_id}`)")
+    # Save user to database
+    await save_user(user_id)
+    await context.bot.send_message(LOG_CHANNEL_ID, f"🆕 New User: {mention} (`{user_id}`)", parse_mode="HTML")
 
     start_text = (
-        "✨ **Welcome to the Image Uploader Bot!**\n\n"
-        "📌 **Features:**\n"
+        "✨ <b>Welcome to the Image Uploader Bot!</b>\n\n"
+        "📌 <b>Features:</b>\n"
         "✅ Upload images & get a permanent link\n"
+        "✅ Telegram emoji reactions 🎭\n"
         "✅ Fully automated & responsive\n"
         "✅ No storage limits – Upload as much as you want!\n\n"
-        "🚀 **Just send an image to get started!**"
+        "🚀 <b>Just send an image to get started!</b>"
     )
     keyboard = [[InlineKeyboardButton("👨‍💻 Developer", url="https://t.me/Soutick_09")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(start_text, reply_markup=reply_markup)
+    await update.message.reply_text(start_text, reply_markup=reply_markup, parse_mode="HTML")
 
-# Ban a user
+# Ban User
 async def ban(update: Update, context: CallbackContext):
     if update.effective_user.id != OWNER_ID:
         return await update.message.reply_text("⚠️ Only the bot owner can use this command.")
@@ -66,11 +67,10 @@ async def ban(update: Update, context: CallbackContext):
         return await update.message.reply_text("Usage: /ban <user_id>")
 
     user_id = int(context.args[0])
-    registered_users.discard(user_id)
-    save_users()
-    await update.message.reply_text(f"🚫 User `{user_id}` has been banned.")
+    await users_collection.delete_one({"user_id": user_id})
+    await update.message.reply_text(f"🚫 User `{user_id}` has been banned.", parse_mode="HTML")
 
-# Unban a user
+# Unban User
 async def unban(update: Update, context: CallbackContext):
     if update.effective_user.id != OWNER_ID:
         return await update.message.reply_text("⚠️ Only the bot owner can use this command.")
@@ -79,11 +79,10 @@ async def unban(update: Update, context: CallbackContext):
         return await update.message.reply_text("Usage: /unban <user_id>")
 
     user_id = int(context.args[0])
-    registered_users.add(user_id)
-    save_users()
-    await update.message.reply_text(f"✅ User `{user_id}` has been unbanned.")
+    await save_user(user_id)
+    await update.message.reply_text(f"✅ User `{user_id}` has been unbanned.", parse_mode="HTML")
 
-# Restart bot
+# Restart Bot
 async def restart(update: Update, context: CallbackContext):
     if update.effective_user.id != OWNER_ID:
         return await update.message.reply_text("⚠️ Only the bot owner can use this command.")
@@ -91,18 +90,18 @@ async def restart(update: Update, context: CallbackContext):
     await update.message.reply_text("🔄 Restarting bot...")
     os.execl(sys.executable, sys.executable, *sys.argv)
 
-# Stats command
+# Stats Command
 async def stats(update: Update, context: CallbackContext):
     if update.effective_user.id != OWNER_ID:
         return await update.message.reply_text("⚠️ Only the bot owner can use this command.")
     
-    total_users = len(registered_users)
-    await update.message.reply_text(f"📊 Total Users: {total_users}")
+    total_users = await get_total_users()
+    await update.message.reply_text(f"📊 <b>Total Users:</b> {total_users}", parse_mode="HTML")
 
-# Handle media upload
+# Handle Media Upload
 async def handle_media(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    mention = update.effective_user.mention_markdown_v2()
+    mention = update.effective_user.mention_html()
 
     file = update.message.photo[-1] if update.message.photo else update.message.document
     file_path = await context.bot.get_file(file.file_id)
@@ -126,45 +125,43 @@ async def handle_media(update: Update, context: CallbackContext):
     await context.bot.delete_message(chat_id=status_message.chat_id, message_id=status_message.message_id)
 
     # Forward Image to Log Channel
-    caption_text = f"📸 Image received from [{update.effective_user.first_name}](tg://user?id={user_id}) (`{user_id}`)"
-    await context.bot.send_photo(chat_id=LOG_CHANNEL_ID, photo=file.file_id, caption=caption_text, parse_mode="Markdown")
+    caption_text = f"📸 <b>Image received from:</b> {mention} (`{user_id}`)"
+    await context.bot.send_photo(chat_id=LOG_CHANNEL_ID, photo=file.file_id, caption=caption_text, parse_mode="HTML")
 
-    # Send Random Reaction
-    reactions = ["🔥", "😎", "👍", "😍", "🤩", "👏", "💯", "😂"]
-    await update.message.reply_text(random.choice(reactions))
+    # React with Emoji
+    await update.message.reply_reaction("🔥")
 
-# Broadcast command
+# Broadcast Command
 async def broadcast(update: Update, context: CallbackContext):
     if update.effective_user.id != OWNER_ID:
         return await update.message.reply_text("⚠️ Only the bot owner can use this command.")
-    
-    if not context.args:
-        return await update.message.reply_text("Usage: /broadcast <message>")
-    
-    message_text = " ".join(context.args)
-    total_users = len(registered_users)
-    sent_count = 0
 
+    if not update.message.reply_to_message:
+        return await update.message.reply_text("Reply to a message to broadcast it!")
+
+    total_users = await get_total_users()
+    sent_count = 0
     status_message = await update.message.reply_text(f"📢 Broadcasting... 0/{total_users}")
 
-    for index, user_id in enumerate(registered_users, start=1):
+    async for user in users_collection.find():
+        user_id = user["user_id"]
         try:
-            await context.bot.send_message(user_id, text=message_text, parse_mode="Markdown")
+            await context.bot.forward_message(chat_id=user_id, from_chat_id=update.message.chat_id, message_id=update.message.reply_to_message.message_id)
             sent_count += 1
         except Exception:
             pass  # Ignore errors (e.g., user blocked bot)
-        
-        if index % 2 == 0:  # Update status every 2 messages
+
+        if sent_count % 2 == 0:
             await status_message.edit_text(f"📢 Broadcasting... {sent_count}/{total_users}")
             await asyncio.sleep(1)
 
     await status_message.edit_text(f"✅ Broadcast Completed! Sent to {sent_count}/{total_users} users.")
 
-# Main function
+# Main Function
 def main():
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # Command handlers
+    # Command Handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("ban", ban))
     application.add_handler(CommandHandler("unban", unban))
@@ -172,10 +169,10 @@ def main():
     application.add_handler(CommandHandler("stats", stats))
     application.add_handler(CommandHandler("broadcast", broadcast))
 
-    # Media handler
+    # Media Handler
     application.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_media))
 
-    # Start bot
+    # Start Bot
     application.run_polling()
 
 if __name__ == "__main__":
