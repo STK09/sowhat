@@ -35,11 +35,11 @@ IST = pytz.timezone("Asia/Kolkata")
 # Start Command
 async def start(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    mention = update.effective_user.mention_html()
+    mention = f'<a href="tg://openmessage?user_id={user_id}">{update.effective_user.full_name}</a>'
 
     if not users_collection.find_one({"user_id": user_id}):
         users_collection.insert_one({"user_id": user_id})
-        await context.bot.send_message(LOG_CHANNEL_ID, f"🆕 New User: {mention} (`{user_id}`)")
+        await context.bot.send_message(LOG_CHANNEL_ID, f"🆕 New User: {mention} (`{user_id}`)", parse_mode="HTML")
 
     start_text = (
         "✨ <b>Welcome to the Image Uploader Bot!</b>\n\n"
@@ -106,7 +106,7 @@ async def stats(update: Update, context: CallbackContext):
 # Handle media upload
 async def handle_media(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    mention = update.effective_user.mention_html()
+    mention = f'<a href="tg://openmessage?user_id={user_id}">{update.effective_user.full_name}</a>'
 
     file = update.message.photo[-1] if update.message.photo else update.message.document
     file_path = await context.bot.get_file(file.file_id)
@@ -120,9 +120,10 @@ async def handle_media(update: Update, context: CallbackContext):
 
     if res.status_code == 200:
         image_url = res.json()["data"]["image"]["url"]
-        keyboard = [[InlineKeyboardButton("📋 Copy Link", url=image_url)]]
+        copy_text = f"`{image_url}`"
+        keyboard = [[InlineKeyboardButton("📋 Copy Link", callback_data="copy_link")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("✅ <b>Upload Successful!</b>", reply_markup=reply_markup, parse_mode="HTML")
+        await update.message.reply_text(f"✅ <b>Upload Successful!</b>\n\n{copy_text}", reply_markup=reply_markup, parse_mode="Markdown")
     else:
         await update.message.reply_text("❌ Upload failed! Please try again.")
 
@@ -164,15 +165,12 @@ async def broadcast(update: Update, context: CallbackContext):
 def main():
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # Command handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("ban", ban))
     application.add_handler(CommandHandler("unban", unban))
     application.add_handler(CommandHandler("restart", restart))
     application.add_handler(CommandHandler("stats", stats))
     application.add_handler(CommandHandler("broadcast", broadcast))
-
-    # Media handler
     application.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_media))
 
     application.run_polling()
