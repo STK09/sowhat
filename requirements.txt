@@ -1,4 +1,7 @@
 python-telegram-bot==20.0
 python-dotenv
-requests
-pymongo
+python-telegram-bot==20.7
+pymongo[srv]==4.6.1
+python-dotenv==1.0.0
+requests==2.31.0
+pytz==2023.3.post1
