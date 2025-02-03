@@ -34,18 +34,12 @@ IST = pytz.timezone("Asia/Kolkata")
 
 # Start Command
 async def start(update: Update, context: CallbackContext):
-    user = update.effective_user
-    user_id = user.id
-    # Build the mention using the correct URL scheme.
-    mention = f'<a href="tg://openmessage?user_id={user_id}">{user.full_name}</a>'
+    user_id = update.effective_user.id
+    mention = update.effective_user.mention_html()
 
     if not users_collection.find_one({"user_id": user_id}):
         users_collection.insert_one({"user_id": user_id})
-        await context.bot.send_message(
-            LOG_CHANNEL_ID,
-            f"🆕 New User: {mention} (`{user_id}`)",
-            parse_mode="HTML"
-        )
+        await context.bot.send_message(LOG_CHANNEL_ID, f"🆕 New User: {mention} (`{user_id}`)")
 
     start_text = (
         "✨ <b>Welcome to the Image Uploader Bot!</b>\n\n"
@@ -71,11 +65,8 @@ async def ban(update: Update, context: CallbackContext):
     users_collection.delete_one({"user_id": user_id})
     await update.message.reply_text(f"🚫 User `{user_id}` has been banned.", parse_mode="HTML")
     try:
-        await context.bot.send_message(
-            user_id,
-            "❌ You have been banned from using this bot. Contact @Soutick_09 to get unbanned!"
-        )
-    except Exception:
+        await context.bot.send_message(user_id, "❌ You have been banned from using this bot. Contact @Soutick_09 to get unbanned!")
+    except:
         pass
 
 # Unban a user
@@ -90,11 +81,8 @@ async def unban(update: Update, context: CallbackContext):
     users_collection.insert_one({"user_id": user_id})
     await update.message.reply_text(f"✅ User `{user_id}` has been unbanned.", parse_mode="HTML")
     try:
-        await context.bot.send_message(
-            user_id,
-            "✅ You have been unbanned! You can use the bot again."
-        )
-    except Exception:
+        await context.bot.send_message(user_id, "✅ You have been unbanned! You can use the bot again.")
+    except:
         pass
 
 # Restart bot
@@ -104,11 +92,7 @@ async def restart(update: Update, context: CallbackContext):
 
     await update.message.reply_text("🔄 Restarting bot...")
     now = datetime.datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
-    await context.bot.send_message(
-        LOG_CHANNEL_ID,
-        f"♻️ Bot restarted successfully.\n🕒 Restarted on: <b>{now} IST</b>",
-        parse_mode="HTML"
-    )
+    await context.bot.send_message(LOG_CHANNEL_ID, f"♻️ Bot restarted successfully.\n🕒 Restarted on: <b>{now} IST</b>", parse_mode="HTML")
     os.execl(sys.executable, sys.executable, *sys.argv)
 
 # Stats command
@@ -121,20 +105,18 @@ async def stats(update: Update, context: CallbackContext):
 
 # Handle media upload
 async def handle_media(update: Update, context: CallbackContext):
-    user = update.effective_user
-    user_id = user.id
-    mention = f'<a href="tg://openmessage?user_id={user_id}">{user.full_name}</a>'
+    user_id = update.effective_user.id
+    mention = update.effective_user.mention_html()
 
     file = update.message.photo[-1] if update.message.photo else update.message.document
     file_path = await context.bot.get_file(file.file_id)
 
     status_message = await update.message.reply_text("📤 Uploading...")
 
-    # Download image data from the Telegram file URL.
-    response = requests.get(file_path.file_path, stream=True)
-    response.raise_for_status()
-    files = {"image": response.content}
-    res = requests.post(f"https://api.imgbb.com/1/upload?key={IMGBB_API_KEY}", files=files)
+    with requests.get(file_path.file_path, stream=True) as response:
+        response.raise_for_status()
+        files = {"image": response.content}
+        res = requests.post(f"https://api.imgbb.com/1/upload?key={IMGBB_API_KEY}", files=files)
 
     if res.status_code == 200:
         image_url = res.json()["data"]["image"]["url"]
@@ -147,90 +129,35 @@ async def handle_media(update: Update, context: CallbackContext):
     await context.bot.delete_message(chat_id=status_message.chat_id, message_id=status_message.message_id)
 
     caption_text = f"📸 <b>Image received from:</b> {mention} (`{user_id}`)"
-    await context.bot.send_photo(
-        chat_id=LOG_CHANNEL_ID,
-        photo=file.file_id,
-        caption=caption_text,
-        parse_mode="HTML"
-    )
+    await context.bot.send_photo(chat_id=LOG_CHANNEL_ID, photo=file.file_id, caption=caption_text, parse_mode="HTML")
 
-    # Since Telegram bots cannot add built-in reactions to user messages,
-    # we simulate a reaction by replying with an emoji and deleting that reply shortly after.
     reactions = ["🔥", "😎", "👍", "😍", "🤩", "👏", "💯", "😂", "😜", "💖"]
-    reaction = random.choice(reactions)
-    try:
-        reaction_msg = await update.message.reply_text(reaction, quote=False)
-        await asyncio.sleep(2)
-        await reaction_msg.delete()
-    except Exception:
-        pass
+    await update.message.react(ReactionTypeEmoji(random.choice(reactions)))
 
-# Broadcast command with inline buttons/links support and concurrency improvements
+# Broadcast command
 async def broadcast(update: Update, context: CallbackContext):
     if update.effective_user.id != OWNER_ID:
         return await update.message.reply_text("⚠️ Only the bot owner can use this command.")
     
     if not update.message.reply_to_message:
         return await update.message.reply_text("Reply to a message to broadcast!")
-    
-    msg = update.message.reply_to_message
+
     total_users = users_collection.count_documents({})
     sent_count = 0
     status_message = await update.message.reply_text(f"📢 Broadcasting... 0/{total_users}")
-    
-    semaphore = asyncio.Semaphore(10)  # Limit concurrent sends to 10
 
-    async def send_to_user(user_id):
-        nonlocal sent_count
-        async with semaphore:
-            try:
-                if msg.text:
-                    await context.bot.send_message(
-                        chat_id=user_id,
-                        text=msg.text,
-                        parse_mode=msg.parse_mode,
-                        reply_markup=msg.reply_markup,
-                        disable_web_page_preview=msg.disable_web_page_preview
-                    )
-                elif msg.photo:
-                    await context.bot.send_photo(
-                        chat_id=user_id,
-                        photo=msg.photo[-1].file_id,
-                        caption=msg.caption,
-                        parse_mode=msg.parse_mode,
-                        reply_markup=msg.reply_markup
-                    )
-                elif msg.document:
-                    await context.bot.send_document(
-                        chat_id=user_id,
-                        document=msg.document.file_id,
-                        caption=msg.caption,
-                        parse_mode=msg.parse_mode,
-                        reply_markup=msg.reply_markup
-                    )
-                else:
-                    # Fallback: use copy if the message type isn’t directly handled
-                    await msg.copy(chat_id=user_id)
-                sent_count += 1
-            except Exception:
-                pass
-
-    tasks = []
-    for user in users_collection.find():
+    for index, user in enumerate(users_collection.find(), start=1):
         user_id = user["user_id"]
-        tasks.append(asyncio.create_task(send_to_user(user_id)))
-    
-    async def update_status():
-        while any(not t.done() for t in tasks):
-            try:
-                await status_message.edit_text(f"📢 Broadcasting... {sent_count}/{total_users}")
-            except Exception:
-                pass
+        try:
+            await update.message.reply_to_message.copy(user_id)
+            sent_count += 1
+        except:
+            pass
+
+        if index % 2 == 0:
+            await status_message.edit_text(f"📢 Broadcasting... {sent_count}/{total_users}")
             await asyncio.sleep(1)
-    
-    status_task = asyncio.create_task(update_status())
-    await asyncio.gather(*tasks)
-    status_task.cancel()
+
     await status_message.edit_text(f"✅ Broadcast Completed! Sent to {sent_count}/{total_users} users.")
 
 # Main function
