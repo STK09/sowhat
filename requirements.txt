@@ -1,8 +1,4 @@
 python-telegram-bot
-python-dotenv
-python-telegram-bot
-pymongo
-python-dotenv
-requests
+pymongo[srv]
 pytz
-aiohttp
+requests
